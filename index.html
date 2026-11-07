@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en-AU"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>FRVR Recorder</title><meta name="robots" content="noindex"><meta name="theme-color" content="#0E1020"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="FRVR Recorder">
+<style>
+:root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;background:#0E1020;color:#fff;font:15px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
+main{max-width:560px;margin:0 auto;padding:max(24px,env(safe-area-inset-top)) 16px 32px}
+h1{font-size:24px;font-weight:700;margin:0 0 4px}p{margin:0 0 14px;color:#a9acb8}
+textarea{width:100%;min-height:42vh;background:#1B1E33;border:1px solid #2A2E4A;border-radius:14px;color:#fff;font:16px/1.5 inherit;padding:12px}
+input[type=text]{width:100%;background:#1B1E33;border:1px solid #2A2E4A;border-radius:12px;color:#fff;font-size:16px;padding:11px 12px;margin:0 0 10px}
+button.go{width:100%;min-height:52px;margin-top:12px;background:#E0B84F;color:#0E1020;border:0;border-radius:14px;font:700 16px/1 inherit;cursor:pointer}
+.err{color:#ef6b6b;margin-top:12px;display:none}
+</style></head><body><main id="m"></main>
+<script type="module">
+import { mountPrompter, parsePlain, plainText, spokenLines, wordCount, fmtTime, decodeHand, openCamera, canRecordHere } from './prompter-core.js';
+const M = document.getElementById('m');
+const read = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
+const write = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
+let hand = null; try { const h = location.hash.match(/s=([^&]+)/); if (h) hand = decodeHand(h[1]); } catch {}
+const last = read('frvr.rec.last', {});
+const title = hand?.title ?? last.title ?? '';
+const text = hand ? (hand.text ?? plainText(spokenLines(hand.script || ''))) : (last.text || '');
+const prefs = { ...read('frvr.rec.prefs', {}), ...(hand?.prefs || {}) };
+M.innerHTML = `<h1>FRVR Recorder</h1><p>Your front camera with the script over it. The words stay on the screen; only you are recorded. Nothing leaves this phone until you save it.</p>
+  <input type="text" id="t" placeholder="Title (names the file)"><textarea id="x" placeholder="Paste the script. One thought per line."></textarea>
+  <p id="n" style="margin:8px 0 0;font-size:13px"></p><button class="go" id="g">🎬 Open the camera</button><p class="err" id="e"></p>`;
+const T = document.getElementById('t'), X = document.getElementById('x'), N = document.getElementById('n'), E = document.getElementById('e');
+T.value = title; X.value = text;
+const count = () => { const w = wordCount(parsePlain(X.value)); N.textContent = w ? `${w} words · about ${fmtTime(w / ((prefs.wpm || 130) / 60))}` : ''; }; X.oninput = count; count();
+const fail = m => { E.textContent = m; E.style.display = 'block'; };
+document.getElementById('g').onclick = async () => {
+  const lines = parsePlain(X.value); if (!lines.length) return fail('Paste the script first.');
+  if (!canRecordHere()) return fail('This browser can’t record. On iPhone, open this link in Safari.');
+  write('frvr.rec.last', { title: T.value, text: X.value });
+  let stream; try { stream = await openCamera(); } catch (e) { return fail(e.name === 'NotAllowedError' ? 'Camera or mic was refused. On iPhone: Settings → Safari → Camera and Microphone → Ask, then try again.' : `The camera wouldn’t open (${e.name}).`); }
+  mountPrompter(document.body, { lines, title: T.value, stream, prefs, onPrefs: p => write('frvr.rec.prefs', p), onClose: () => {},
+    onTake: (file) => [{ label: '💾 Save this take', go: true, run: async (b) => {
+      if (navigator.canShare?.({ files: [file] })) { try { await navigator.share({ files: [file], title: file.name }); b.textContent = '✓ Shared. Save again?'; return; } catch (e) { if (e.name === 'AbortError') return false; } }
+      const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = file.name; document.body.appendChild(a); a.click(); a.remove(); b.textContent = '✓ Saved. Save again?';
+    } }] });
+};
+</script></body></html>
