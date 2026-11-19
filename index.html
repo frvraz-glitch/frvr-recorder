@@ -8,10 +8,11 @@ h1{font-size:24px;font-weight:700;margin:0 0 4px}p{margin:0 0 14px;color:#a9acb8
 textarea{width:100%;min-height:42vh;background:#1B1E33;border:1px solid #2A2E4A;border-radius:14px;color:#fff;font:16px/1.5 inherit;padding:12px}
 input[type=text]{width:100%;background:#1B1E33;border:1px solid #2A2E4A;border-radius:12px;color:#fff;font-size:16px;padding:11px 12px;margin:0 0 10px}
 button.go{width:100%;min-height:52px;margin-top:12px;background:#E0B84F;color:#0E1020;border:0;border-radius:14px;font:700 16px/1 inherit;cursor:pointer}
+button.go.alt{background:transparent;color:#E0B84F;border:1px solid #E0B84F;font-weight:600}
 .err{color:#ef6b6b;margin-top:12px;display:none}
 </style></head><body><main id="m"></main>
 <script type="module">
-import { mountPrompter, parsePlain, plainText, spokenLines, wordCount, fmtTime, decodeHand, openCamera, canRecordHere } from './prompter-core.js';
+import { mountPrompter, parsePlain, plainText, spokenLines, wordCount, fmtTime, decodeHand, openCamera, canRecordHere } from './prompter-core.js?v=3';
 const M = document.getElementById('m');
 const read = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
 const write = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
@@ -22,20 +23,22 @@ const text = hand ? (hand.text ?? plainText(spokenLines(hand.script || ''))) : (
 const prefs = { ...read('frvr.rec.prefs', {}), ...(hand?.prefs || {}) };
 M.innerHTML = `<h1>FRVR Recorder</h1><p>Your front camera with the script over it. The words stay on the screen; only you are recorded. Nothing leaves this phone until you save it.</p>
   <input type="text" id="t" placeholder="Title (names the file)"><textarea id="x" placeholder="Paste the script. One thought per line."></textarea>
-  <p id="n" style="margin:8px 0 0;font-size:13px"></p><button class="go" id="g">🎬 Open the camera</button><p class="err" id="e"></p>`;
+  <p id="n" style="margin:8px 0 0;font-size:13px"></p><button class="go" id="g">🎬 Open the camera</button><button class="go alt" id="gw">Open the camera, wide view</button><p style="margin:8px 0 0;font-size:13px">Wide view shows more around you. The take is 3:4, so it gets cropped to 9:16 in the edit. If it looks wrong, use the first button.</p><p class="err" id="e"></p>`;
 const T = document.getElementById('t'), X = document.getElementById('x'), N = document.getElementById('n'), E = document.getElementById('e');
 T.value = title; X.value = text;
 const count = () => { const w = wordCount(parsePlain(X.value)); N.textContent = w ? `${w} words · about ${fmtTime(w / ((prefs.wpm || 130) / 60))}` : ''; }; X.oninput = count; count();
 const fail = m => { E.textContent = m; E.style.display = 'block'; };
-document.getElementById('g').onclick = async () => {
+const start = async wide => {
   const lines = parsePlain(X.value); if (!lines.length) return fail('Paste the script first.');
   if (!canRecordHere()) return fail('This browser can’t record. On iPhone, open this link in Safari.');
   write('frvr.rec.last', { title: T.value, text: X.value });
-  let stream; try { stream = await openCamera(); } catch (e) { return fail(e.name === 'NotAllowedError' ? 'Camera or mic was refused. On iPhone: Settings → Safari → Camera and Microphone → Ask, then try again.' : `The camera wouldn’t open (${e.name}).`); }
+  let stream; try { stream = await openCamera(undefined, wide); } catch (e) { return fail(e.name === 'NotAllowedError' ? 'Camera or mic was refused. On iPhone: Settings → Safari → Camera and Microphone → Ask, then try again.' : `The camera wouldn’t open (${e.name}).`); }
   mountPrompter(document.body, { lines, title: T.value, stream, prefs, onPrefs: p => write('frvr.rec.prefs', p), onClose: () => {},
     onTake: (file) => [{ label: '💾 Save this take', go: true, run: async (b) => {
       if (navigator.canShare?.({ files: [file] })) { try { await navigator.share({ files: [file], title: file.name }); b.textContent = '✓ Shared. Save again?'; return; } catch (e) { if (e.name === 'AbortError') return false; } }
       const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = file.name; document.body.appendChild(a); a.click(); a.remove(); b.textContent = '✓ Saved. Save again?';
     } }] });
 };
+document.getElementById('g').onclick = () => start(false);
+document.getElementById('gw').onclick = () => start(true);
 </script></body></html>

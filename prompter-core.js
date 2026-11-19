@@ -5,7 +5,7 @@
 // Speed is words per minute, measured against the laid-out text, so changing the text size never changes his pace.
 // The words sit on the screen only: the recording holds the camera and mic, never the text.
 
-export const DEFAULTS = { size: 38, wpm: 130, mirror: false, width: 100 };
+export const DEFAULTS = { size: 38, wpm: 130, mirror: false, width: 100, fitView: true };
 export const LIMITS = { size: [20, 84], wpm: [60, 240] };
 const clamp = (v, [a, b]) => Math.min(b, Math.max(a, v));
 const esc = s => String(s).replace(/[&<>"]/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[m]));
@@ -69,8 +69,10 @@ const pickMime = () => (window.MediaRecorder ? MIMES.find(m => MediaRecorder.isT
 export const canRecordHere = () => !!(navigator.mediaDevices?.getUserMedia && window.MediaRecorder);
 
 // Opens the front camera. Rejects with the browser's error when the page isn't allowed to.
-export async function openCamera(landscape = innerWidth > innerHeight) {
-  const video = { facingMode: 'user', width: { ideal: landscape ? 1920 : 1080 }, height: { ideal: landscape ? 1080 : 1920 }, frameRate: { ideal: 30 } };
+export async function openCamera(landscape = innerWidth > innerHeight, wide = false) {
+  const video = wide
+    ? { facingMode: 'user', width: { ideal: landscape ? 1920 : 1440 }, height: { ideal: landscape ? 1440 : 1920 }, frameRate: { ideal: 30 } }
+    : { facingMode: 'user', width: { ideal: landscape ? 1920 : 1080 }, height: { ideal: landscape ? 1080 : 1920 }, frameRate: { ideal: 30 } };
   const audio = { echoCancellation: false, noiseSuppression: true, autoGainControl: true };
   try { return await navigator.mediaDevices.getUserMedia({ video, audio }); }
   catch (e) { if (e.name === 'OverconstrainedError') return navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: true }); throw e; }
@@ -79,6 +81,8 @@ export async function openCamera(landscape = innerWidth > innerHeight) {
 export const PROMPTER_CSS = `
 .pt{position:fixed;inset:0;z-index:9999;background:#05060c;color:#fff;font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;overflow:hidden;touch-action:none;user-select:none;-webkit-user-select:none}
 .pt video.pt-cam{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1);background:#05060c}
+.pt.pt-fit video.pt-cam{object-fit:contain}
+.pt .pt-top button.pt-on{color:#E0B84F;border-color:#E0B84F}
 .pt .pt-shade{position:absolute;inset:0 0 auto 0;height:58%;background:linear-gradient(to bottom,rgba(5,6,12,.86) 0,rgba(5,6,12,.74) 72%,rgba(5,6,12,0) 100%);pointer-events:none}
 .pt.pt-nocam .pt-shade{display:none}
 .pt .pt-view{position:absolute;left:0;right:0;top:0;height:58%;overflow:hidden;padding:0 max(18px,env(safe-area-inset-left));cursor:grab}
@@ -135,7 +139,7 @@ export function mountPrompter(root, opts) {
   el.innerHTML = `${stream ? '<video class="pt-cam" playsinline autoplay muted></video><div class="pt-shade"></div>' : ''}
     <div class="pt-view"><div class="pt-roll">${lines.map(l => l.kind === 'head' ? `<p class="pt-head">${esc(l.text)}</p>` : `<p class="pt-say ${l.kind === 'yours' ? 'pt-yours' : ''} ${l.kind === 'cue' ? 'pt-cue' : ''}">${esc(l.text)}</p>`).join('')}</div></div>
     <div class="pt-stat" data-stat></div>
-    <div class="pt-top"><button data-mirror title="Flip the words for a glass rig">⇋</button><button data-close aria-label="Close">✕</button></div>
+    <div class="pt-top">${stream ? '<button data-fit title="Show the whole recorded frame, or fill the screen">Fit</button>' : ''}<button data-mirror title="Flip the words for a glass rig">⇋</button><button data-close aria-label="Close">✕</button></div>
     <div class="pt-bar">
       <div class="pt-ctl"><button data-size="-1" aria-label="Smaller text">A−</button><label>TEXT SIZE <b data-sizev></b><input type="range" data-sizer min="${LIMITS.size[0]}" max="${LIMITS.size[1]}" step="1" aria-label="Text size"></label><button data-size="1" aria-label="Larger text">A+</button></div>
       <div class="pt-ctl"><button data-wpm="-5" aria-label="Slower">🐢</button><label>SPEED <b data-wpmv></b><input type="range" data-wpmr min="${LIMITS.wpm[0]}" max="${LIMITS.wpm[1]}" step="5" aria-label="Speed in words per minute"></label><button data-wpm="5" aria-label="Faster">🐇</button></div>
@@ -159,7 +163,8 @@ export function mountPrompter(root, opts) {
     roll.style.fontSize = prefs.size + 'px';
     $('[data-sizev]').textContent = prefs.size; $('[data-sizer]').value = prefs.size;
     $('[data-wpmv]').textContent = `${prefs.wpm} wpm`; $('[data-wpmr]').value = prefs.wpm;
-    el.classList.toggle('pt-mirror', !!prefs.mirror); $('[data-mirror]').classList.toggle('pt-on', !!prefs.mirror); stat(); apply();
+    el.classList.toggle('pt-mirror', !!prefs.mirror); $('[data-mirror]').classList.toggle('pt-on', !!prefs.mirror);
+    el.classList.toggle('pt-fit', !!prefs.fitView); $('[data-fit]')?.classList.toggle('pt-on', !!prefs.fitView); stat(); apply();
   };
   // A new size re-flows the text; keep the same words on the reading line.
   const setSize = v => { const frac = y / scrollable(); prefs.size = clamp(v, LIMITS.size); roll.style.fontSize = prefs.size + 'px'; y = frac * scrollable(); paint(); persist(); };
@@ -181,7 +186,7 @@ export function mountPrompter(root, opts) {
   document.addEventListener('visibilitychange', onVis);
 
   // ---------- recording ----------
-  const countdown = async n => { const c = document.createElement('div'); c.className = 'pt-count'; el.appendChild(c); for (let i = n; i > 0; i--) { c.textContent = i; await new Promise(r => setTimeout(r, 800)); } c.remove(); };
+  const countdown = async n => { const c = document.createElement('div'); c.className = 'pt-count'; el.appendChild(c); for (let i = n; i > 0; i--) { c.textContent = i; await new Promise(r => setTimeout(r, 1000)); } c.remove(); };
   async function startRec() {
     if (busy) return; busy = true;
     await countdown(3);
@@ -221,6 +226,7 @@ export function mountPrompter(root, opts) {
   $('[data-pause]').onclick = () => setRunning(!running);
   $('[data-top]').onclick = () => { y = 0; hold = performance.now() + 800; apply(); stat(); };
   $('[data-mirror]').onclick = () => { prefs.mirror = !prefs.mirror; paint(); persist(); };
+  $('[data-fit]')?.addEventListener('click', () => { prefs.fitView = !prefs.fitView; paint(); persist(); });
   $('[data-sizer]').oninput = e => setSize(+e.target.value);
   $('[data-wpmr]').oninput = e => setWpm(+e.target.value);
   el.querySelectorAll('[data-size]').forEach(b => b.onclick = () => setSize(prefs.size + 2 * +b.dataset.size));
