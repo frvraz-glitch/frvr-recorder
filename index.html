@@ -37,7 +37,7 @@ const count = () => { const w = wordCount(parsePlain(X.value)); N.textContent = 
 const OV = document.getElementById('ov'), OH = document.getElementById('oh'), ON = document.getElementById('oh-note');
 const held = () => innerWidth > innerHeight;
 const savedShape = read('frvr.rec.shape', null);
-(savedShape === 'h' || (savedShape == null && held()) ? OH : OV).checked = true;
+((hand?.prefs?.shape || savedShape || 'v') === 'h' ? OH : OV).checked = true;
 const shapeNote = () => { ON.textContent = OH.checked && !held() ? 'Turn the phone sideways before you open the camera, with rotation lock off. Held upright, a horizontal take is cut from the middle of the picture and looks closer.' : !OH.checked && held() ? 'The phone is sideways. Turn it upright for a vertical take, or it will be cut from the middle of the picture.' : ''; };
 OV.onchange = OH.onchange = () => { write('frvr.rec.shape', OH.checked ? 'h' : 'v'); shapeNote(); }; addEventListener('resize', shapeNote); shapeNote();
 const CD = document.getElementById('cd'), CDV = document.getElementById('cdv');
