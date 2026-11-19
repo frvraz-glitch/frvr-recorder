@@ -10,28 +10,92 @@ export const LIMITS = { size: [20, 84], wpm: [60, 240], countdown: [3, 10] };
 const clamp = (v, [a, b]) => Math.min(b, Math.max(a, v));
 const esc = s => String(s).replace(/[&<>"]/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[m]));
 
-// One piece's script → [{ kind: 'head' | 'say' | 'yours' | 'cue', text }]
-//   say   · words to read
-//   yours · a line only Aziel can give ([AZ: …]): shown as a gold prompt, never filled in for him
-//   cue   · a stage direction in brackets, shown small and dim
+// One piece's script → [{ kind: 'head' | 'say' | 'yours' | 'cue', text, voice?, ref? }]
+//   say   · words to read. voice 'scripture' = God's word, read as written · 'them' = said straight to the viewer ·
+//           no voice = Aziel teaching or telling it in his own voice
+//   yours · a line only Aziel can give ([AZ: …]): a prompt, never filled in for him
+//   cue   · a stage direction in brackets, shown small and dim, never read out
+// Production notes never reach the prompter: timecodes, ON SCREEN, SHOT, LOOK, MUSIC, B-ROLL, VERSE footers, SOURCES.
+const BOOKS = '(?:[1-3]\\s)?(?:Genesis|Exodus|Leviticus|Numbers|Deuteronomy|Joshua|Judges|Ruth|Samuel|Kings|Chronicles|Ezra|Nehemiah|Esther|Job|Psalms?|Proverbs|Ecclesiastes|Song of Songs|Isaiah|Jeremiah|Lamentations|Ezekiel|Daniel|Hosea|Joel|Amos|Obadiah|Jonah|Micah|Nahum|Habakkuk|Zephaniah|Haggai|Zechariah|Malachi|Matthew|Mark|Luke|John|Acts|Romans|Corinthians|Galatians|Ephesians|Philippians|Colossians|Thessalonians|Timothy|Titus|Philemon|Hebrews|James|Peter|Jude|Revelation)';
+const REF = new RegExp('\\b' + BOOKS + '\\s+\\d+(?::\\d+(?:\\s?[–-]\\s?\\d+)?)?', 'i');
+const NOT_SPOKEN = /^\s*(?:ON[ -]?SCREEN|SHOT(?:\s*\d+)?|END CARD|LOOK|MUSIC|B-?ROLL|AI B-?ROLL PROMPT|SOURCES?|VERSE|CAPTION|HEADLINE|SUB|ASSETS?|FILM|PLATFORMS?|CONTENT KIT)\b[^:\n]{0,40}:/i;
+const SAY_RE = /^\s*(?:SAY|VO(?:\s*\d+)?|V\.?O\.?)\b\s*(\[[^\]]*\]|\([^)]*\))?\s*:\s*(.*)$/i;
+const VO_INLINE = /\|\s*VO(?:\s*\d+)?\s*:\s*(.*)$/i;
+const BEAT_QUOTE = /^\s*\[[^\]]*\]\s*["“](.*)["”]\s*$/;
+const SCREEN_RE = /ON[ -]?SCREEN\s*:\s*([^|\n]*)/i;
+const TELL = /^\s*(?:(?:So|Then|And|But)[,:]?\s+)?(?:This week|Tomorrow|Tonight|Today|Try this|Try|Start|Read|Write|Tell|Call|Pick|Walk|Lift|Ask|Listen|Hear|Stop|Bin|Mute|Open|Pray|Confess|Cast|Remember|Bring|Join|Follow)\b/i;
+const normWords = s => String(s).toLowerCase().replace(/[’‘]/g, "'").replace(/[^a-z0-9'\s]/g, ' ').split(/\s+/).filter(Boolean);
+// Longest run of words two lines share in the same order: how a spoken line is matched to the verse it quotes.
+function sharedInOrder(a, b) {
+  let prev = new Array(b.length + 1).fill(0);
+  for (let i = 1; i <= a.length; i++) { const cur = [0]; for (let j = 1; j <= b.length; j++) cur[j] = a[i - 1] === b[j - 1] ? prev[j - 1] + 1 : Math.max(prev[j], cur[j - 1]); prev = cur; }
+  return prev[b.length];
+}
+// Sentences, without regex lookbehind (older iPhones reject it). A full stop inside a number (13.2%) is not an ending.
+function sentences(t) {
+  const out = []; let start = 0; const s = String(t);
+  for (let i = 0; i < s.length; i++) {
+    if (!'.!?…'.includes(s[i])) continue;
+    let j = i + 1; while (j < s.length && '"\'”’)'.includes(s[j])) j++;
+    if (j >= s.length) break;
+    if (!/\s/.test(s[j])) continue;
+    let k = j; while (k < s.length && /\s/.test(s[k])) k++;
+    if (k < s.length && !/[A-Z0-9"'“‘(]/.test(s[k])) continue;
+    out.push(s.slice(start, j).trim()); start = k; i = k - 1;
+  }
+  const rest = s.slice(start).trim(); if (rest) out.push(rest);
+  return out;
+}
+const cleanRef = r => String(r || '').replace(/,?\s*\b(?:BSB|NKJV|ESV|NIV|KJV|NLT|CSB|NASB)\b.*$/i, '').replace(/\s*·.*$/, '').trim();
+// Is this sentence Scripture being read? Either it matches a verse the script carries, or it quotes one beside a reference.
+function scriptureOf(s, ctx) {
+  const w = normWords(s);
+  if (w.length >= 4) for (const v of ctx.verses) { const l = sharedInOrder(w, v.words); if (l >= 4 && l / Math.min(w.length, v.words.length) >= 0.8) return { voice: 'scripture', ref: v.ref }; }
+  const q = s.match(/(?:^|[\s:,(])['‘“"]([A-Z][^‘“”"]{14,}?)['’”"](?=$|[\s.,;:!?)])/);
+  if (q && q[1].trim().split(/\s+/).length >= 4) { const r = s.match(REF) || ctx.screen.match(REF) || ctx.prev.match(REF); if (r || /\bJesus said\b/i.test(s)) return { voice: 'scripture', ref: r ? cleanRef(r[0]) : '' }; }
+  return null;
+}
+// Is he speaking straight to the viewer here: a question, an invitation, "you", or something to go and do?
+const toThem = s => /\?["'”’)]*\s*$/.test(s) || /^\s*Comment\s+[A-Z]{3,}\b/.test(s) || /\b(?:you|your|yours|yourself|you're|you've|you'll|you'd)\b/i.test(s.replace(/’/g, "'")) || TELL.test(s);
 export function spokenLines(script = '') {
   const raw = String(script).replace(/\r/g, '').split('\n');
-  const SAY = /^\s*(?:SAY|VO(?:\s*\d+)?|V\.?O\.?)\b\s*(\[[^\]]*\]|\([^)]*\))?\s*:\s*(.*)$/i;
   const HEAD = /^\s*\[\s*\d[^\]]*\]\s*(.*)$/;
-  const hasSay = raw.some(l => SAY.test(l));
+  const hasSay = raw.some(l => SAY_RE.test(l));
+  // A production script (beats, VO, SAY, shot or on-screen notes): only spoken words go through, sorted by voice.
+  const structured = hasSay || raw.some(l => VO_INLINE.test(l) || BEAT_QUOTE.test(l) || NOT_SPOKEN.test(l));
   // Long-form scripts are an outline: "03:30 WHAT HE ASKS" over "• …" bullets, which he talks from.
   const CHAPTER = /^\s*\d{1,2}:\d{2}\s+(.+)$/, BULLET = /^\s*[•*-]\s+(.*)$/;
   const out = [];
-  const pushSay = text => {
+  // Every verse the script carries: the VERSE footer, and quoted verses in ON SCREEN lines.
+  const verses = [];
+  if (structured) for (const l of raw) {
+    const v = l.match(/^\s*VERSE\s*:\s*(.*)$/i);
+    if (v) { const r = v[1].match(/\(([^()]*)\)\s*$/); verses.push({ words: normWords(r ? v[1].slice(0, r.index) : v[1]), ref: cleanRef(r ? r[1] : '') }); continue; }
+    const sc = l.match(SCREEN_RE); const q = sc && sc[1].match(/["“]([^"”]{12,})["”]/); const rf = sc && sc[1].match(REF);
+    if (q && rf) verses.push({ words: normWords(q[1]), ref: cleanRef(rf[0]) });
+  }
+  const pushSay = (text, screen = '') => {
     const parts = String(text).split(/(\[[^\]]*\]|\([^)]*\))/).map(s => s.trim()).filter(Boolean);
     for (const p of parts) {
       const az = p.match(/^\[\s*AZ\s*:?\s*(.*)\]$/i);
       if (az) out.push({ kind: 'yours', text: az[1] || 'Your words' });
+      else if (/^[[(]\s*your (?:own )?words/i.test(p)) out.push({ kind: 'yours', text: p.replace(/^[[(]|[\])]$/g, '') });
       else if (/^[[(]/.test(p)) out.push({ kind: 'cue', text: p.replace(/^[[(]|[\])]$/g, '') });
-      else { const t = p.replace(/^["“]|["”]$/g, '').trim(); if (t) out.push({ kind: 'say', text: t }); }
+      else {
+        const t = p.replace(/^["“]|["”]$/g, '').trim(); if (!t) continue;
+        if (!structured) { out.push({ kind: 'say', text: t }); continue; }
+        // One beat keeps one voice (his own, or to the viewer); Scripture inside it is lifted out as its own line.
+        const ss = sentences(t); let prev = '';
+        const marks = ss.map(s => { const v = scriptureOf(s, { verses, screen, prev }); prev = s; return v; });
+        const beat = ss.some((s, i) => !marks[i] && toThem(s)) ? { voice: 'them' } : {};
+        let last = null;
+        ss.forEach((s, i) => { const v = marks[i] || beat;
+          if (last && last.voice === v.voice && (last.ref || '') === (v.ref || '')) last.text += ' ' + s;
+          else { last = { kind: 'say', text: s, ...v }; out.push(last); } });
+      }
     }
   };
-  if (!hasSay && raw.some(l => CHAPTER.test(l))) {
+  if (!structured && raw.some(l => CHAPTER.test(l))) {
     let inBody = false;
     for (const l of raw) {
       const h = l.match(CHAPTER); if (h) { inBody = true; out.push({ kind: 'head', text: h[1].replace(/←.*$/, '').trim() }); continue; }
@@ -39,23 +103,38 @@ export function spokenLines(script = '') {
     }
     return out;
   }
-  if (!hasSay) {
+  if (!structured) {
     raw.join('\n').split(/\n\s*\n/).map(s => s.trim()).filter(Boolean).forEach(p => pushSay(p.replace(/\n/g, ' ')));
     return out;
   }
   let pending = '';
-  for (const l of raw) {
-    const h = l.match(HEAD); if (h) { pending = h[1].replace(/\(.*?\)/g, '').trim(); continue; }
-    const m = l.match(SAY); if (!m) continue;
-    if (pending) { out.push({ kind: 'head', text: pending }); pending = ''; }
-    pushSay(m[2]);
+  for (let i = 0; i < raw.length; i++) {
+    const l = raw[i];
+    const near = (l.match(SCREEN_RE) || (raw[i + 1] || '').match(SCREEN_RE) || [])[1] || '';
+    const say = l.match(SAY_RE) || null, vo = say ? null : l.match(VO_INLINE), beat = say || vo ? null : l.match(BEAT_QUOTE);
+    const spoken = say ? say[2] : vo ? vo[1] : beat ? beat[1] : null;
+    if (spoken != null) { if (!spoken.trim()) continue; if (pending) { out.push({ kind: 'head', text: pending }); pending = ''; } pushSay(spoken, near); continue; }
+    if (NOT_SPOKEN.test(l)) continue;
+    const h = l.match(HEAD); if (h && hasSay && !NOT_SPOKEN.test(h[1])) pending = h[1].replace(/\(.*?\)/g, '').trim();
   }
   return out;
 }
-export const plainText = lines => lines.map(l => l.kind === 'say' ? l.text : l.kind === 'yours' ? `[AZ: ${l.text}]` : l.kind === 'cue' ? `(${l.text})` : `\n# ${l.text}`).join('\n').trim();
+// The words as plain text he can edit. A line starting "SCRIPTURE (ref):" is read as Scripture, "TO THEM:" is said to the viewer,
+// a plain line is his own voice, (brackets) are cues and [AZ: …] is a line only he can give.
+export const plainText = lines => lines.map(l => l.kind === 'say' ? (l.voice === 'scripture' ? `SCRIPTURE${l.ref ? ` (${l.ref})` : ''}: ${l.text}` : l.voice === 'them' ? `TO THEM: ${l.text}` : l.text) : l.kind === 'yours' ? `[AZ: ${l.text}]` : l.kind === 'cue' ? `(${l.text})` : `\n# ${l.text}`).join('\n').trim();
 export function parsePlain(text = '') {
+  const whole = String(text).replace(/\r/g, '');
+  // A full production script pasted in: read it as one, so verses and notes are understood together.
+  if (whole.split('\n').some(l => SAY_RE.test(l) || VO_INLINE.test(l) || BEAT_QUOTE.test(l) || NOT_SPOKEN.test(l))) return spokenLines(whole);
   const out = [];
-  for (const b of String(text).split('\n')) { const t = b.trim(); if (!t) continue; if (t.startsWith('# ')) out.push({ kind: 'head', text: t.slice(2) }); else out.push(...spokenLines(t)); }
+  for (const b of whole.split('\n')) {
+    const t = b.trim(); if (!t) continue;
+    const sc = t.match(/^SCRIPTURE(?:\s*\(([^)]*)\))?\s*:\s*(.+)$/i), th = sc ? null : t.match(/^TO THEM\s*:\s*(.+)$/i);
+    if (t.startsWith('# ')) out.push({ kind: 'head', text: t.slice(2) });
+    else if (sc) out.push({ kind: 'say', voice: 'scripture', ref: (sc[1] || '').trim(), text: sc[2].trim() });
+    else if (th) out.push({ kind: 'say', voice: 'them', text: th[1].trim() });
+    else out.push(...spokenLines(t));
+  }
   return out;
 }
 export const wordCount = lines => lines.filter(l => l.kind === 'say').reduce((n, l) => n + l.text.split(/\s+/).filter(Boolean).length, 0);
@@ -91,10 +170,16 @@ export const PROMPTER_CSS = `
 .pt .pt-roll{will-change:transform;padding-bottom:60vh;margin:0 auto;max-width:900px}
 .pt.pt-mirror .pt-roll{transform-origin:center}
 .pt .pt-say{font-family:'Inter Tight','Inter',-apple-system,sans-serif;font-weight:600;line-height:1.28;margin:0 0 .62em;letter-spacing:-.005em;overflow-wrap:break-word}
-.pt .pt-say.pt-yours{color:#E0B84F;font-style:italic;font-weight:500}
+.pt .pt-tag{display:block;font:600 11px/1.7 'JetBrains Mono',ui-monospace,monospace;letter-spacing:.14em;text-transform:uppercase;font-style:normal}
+.pt .pt-say.pt-scr{font-family:'Instrument Serif',Georgia,'Times New Roman',serif;font-style:italic;font-weight:400;font-size:1.08em;color:#F2D588;border-left:3px solid #E0B84F;padding-left:.45em}
+.pt .pt-say.pt-scr .pt-tag{color:#E0B84F}
+.pt .pt-say.pt-them{color:#A9DCFF}
+.pt .pt-say.pt-them .pt-tag{color:#6FC3FF}
+.pt .pt-say.pt-yours{color:#FF9E80;font-style:italic;font-weight:500}
 .pt .pt-say.pt-yours::before{content:'YOUR WORDS';display:block;font:600 11px/1.6 'JetBrains Mono',ui-monospace,monospace;letter-spacing:.14em;font-style:normal}
 .pt .pt-head{font:600 12px/1.5 'JetBrains Mono',ui-monospace,monospace;letter-spacing:.14em;text-transform:uppercase;color:rgba(255,255,255,.46);margin:1.6em 0 .7em}
-.pt .pt-cue{font-size:.46em;line-height:1.4;color:rgba(255,255,255,.52);margin:0 0 1em}
+.pt .pt-say.pt-cue{font-size:.46em;line-height:1.4;font-weight:400;color:rgba(255,255,255,.5);margin:0 0 1em}
+.pt .pt-say.pt-cue .pt-tag{color:rgba(255,255,255,.42)}
 .pt .pt-mark{position:absolute;left:0;width:10px;height:0;border:7px solid transparent;border-left:9px solid #E0B84F;width:0;margin-top:-7px;pointer-events:none}
 .pt .pt-bar{position:absolute;left:0;right:0;bottom:0;padding:10px 14px calc(12px + env(safe-area-inset-bottom));background:linear-gradient(to top,rgba(5,6,12,.92) 62%,rgba(5,6,12,0));display:grid;gap:8px;touch-action:manipulation}
 .pt .pt-ctl{display:grid;grid-template-columns:44px 1fr 44px;gap:8px;align-items:center;max-width:560px;width:100%;margin:0 auto}
@@ -129,6 +214,15 @@ export const PROMPTER_CSS = `
 function injectCSS() { if (document.getElementById('pt-css')) return; const s = document.createElement('style'); s.id = 'pt-css'; s.textContent = PROMPTER_CSS; document.head.appendChild(s); }
 
 // opts: { lines, title, stream (null = no camera), prefs, onPrefs(prefs), onTake(file, n) → may return actions, onClose(), takeStart }
+// One line on the prompter. Colour and a small tag say whose words they are, so nothing gets read by mistake:
+// white = his own voice · gold serif with SCRIPTURE = read God's word as written · blue with TO THEM = said to the viewer ·
+// coral YOUR WORDS = say it your way · small grey = a cue, never read.
+const lineHtml = l => l.kind === 'head' ? `<p class="pt-head">${esc(l.text)}</p>`
+  : l.kind === 'cue' ? `<p class="pt-say pt-cue"><span class="pt-tag">Cue · don't read</span>${esc(l.text)}</p>`
+  : l.kind === 'yours' ? `<p class="pt-say pt-yours">${esc(l.text)}</p>`
+  : l.voice === 'scripture' ? `<p class="pt-say pt-scr"><span class="pt-tag">Scripture${l.ref ? ' · ' + esc(l.ref) : ''}</span>${esc(l.text)}</p>`
+  : l.voice === 'them' ? `<p class="pt-say pt-them"><span class="pt-tag">To them</span>${esc(l.text)}</p>`
+  : `<p class="pt-say">${esc(l.text)}</p>`;
 export function mountPrompter(root, opts) {
   injectCSS();
   const { lines, title, stream, onPrefs, onTake, onClose } = opts;
@@ -137,7 +231,7 @@ export function mountPrompter(root, opts) {
   const el = document.createElement('div');
   el.className = `pt ${stream ? '' : 'pt-nocam'} ${prefs.mirror ? 'pt-mirror' : ''}`;
   el.innerHTML = `${stream ? '<video class="pt-cam" playsinline autoplay muted></video><div class="pt-shade"></div>' : ''}
-    <div class="pt-view"><div class="pt-roll">${lines.map(l => l.kind === 'head' ? `<p class="pt-head">${esc(l.text)}</p>` : `<p class="pt-say ${l.kind === 'yours' ? 'pt-yours' : ''} ${l.kind === 'cue' ? 'pt-cue' : ''}">${esc(l.text)}</p>`).join('')}</div></div>
+    <div class="pt-view"><div class="pt-roll">${lines.map(lineHtml).join('')}</div></div>
     <div class="pt-stat" data-stat></div>
     <div class="pt-top">${stream ? '<button data-fit title="Show the whole recorded frame, or fill the screen">Fit</button>' : ''}<button data-mirror title="Flip the words for a glass rig">⇋</button><button data-close aria-label="Close">✕</button></div>
     <div class="pt-bar">

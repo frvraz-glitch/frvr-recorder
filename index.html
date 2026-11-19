@@ -15,7 +15,7 @@ button.go.alt{background:transparent;color:#E0B84F;border:1px solid #E0B84F;font
 .err{color:#ef6b6b;margin-top:12px;display:none}
 </style></head><body><main id="m"></main>
 <script type="module">
-import { mountPrompter, parsePlain, plainText, spokenLines, wordCount, fmtTime, decodeHand, openCamera, canRecordHere } from './prompter-core.js?v=4';
+import { mountPrompter, parsePlain, plainText, spokenLines, wordCount, fmtTime, decodeHand, openCamera, canRecordHere } from './prompter-core.js?v=5';
 const M = document.getElementById('m');
 const read = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
 const write = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
@@ -26,7 +26,7 @@ const text = hand ? (hand.text ?? plainText(spokenLines(hand.script || ''))) : (
 const prefs = { ...read('frvr.rec.prefs', {}), ...(hand?.prefs || {}) };
 M.innerHTML = `<h1>FRVR Recorder</h1><p>Your front camera with the script over it. The words stay on the screen; only you are recorded. Nothing leaves this phone until you save it.</p>
   <input type="text" id="t" placeholder="Title (names the file)"><textarea id="x" placeholder="Paste the script. One thought per line."></textarea>
-  <p id="n" style="margin:8px 0 0;font-size:13px"></p>
+  <p style="margin:8px 0 0;font-size:13px">On the prompter, colour tells you whose words they are: <strong>white</strong> is your own voice, <strong style="color:#E0B84F">gold with SCRIPTURE</strong> is the verse to read as written, <strong style="color:#6FC3FF">blue with TO THEM</strong> is said straight to the viewer, and small grey cues are never read. Timecodes, on-screen text, shot notes and sources are left out.</p><p id="n" style="margin:8px 0 0;font-size:13px"></p>
   <fieldset><legend>Shape of the video</legend><label><input type="radio" name="o" id="ov" value="v"><span>Vertical 9:16</span></label><label><input type="radio" name="o" id="oh" value="h"><span>Horizontal 16:9</span></label></fieldset>
   <p id="oh-note" style="margin:8px 0 0;font-size:13px"></p>
   <label for="cd" style="display:block;margin:12px 0 0;font-size:13px;color:#a9acb8">Countdown before recording: <b id="cdv" style="color:#fff"></b><input type="range" id="cd" min="3" max="10" step="1" style="width:100%;height:32px;accent-color:#E0B84F;display:block"></label><button class="go" id="g">🎬 Open the camera</button><button class="go alt" id="gw">Open the camera, wide view</button><p style="margin:8px 0 0;font-size:13px">Wide view shows more around you. The take is 3:4, so it gets cropped to 9:16 in the edit. If it looks wrong, use the first button.</p><p class="err" id="e"></p>`;
