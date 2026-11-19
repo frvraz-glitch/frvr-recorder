@@ -5,7 +5,7 @@
 // Speed is words per minute, measured against the laid-out text, so changing the text size never changes his pace.
 // The words sit on the screen only: the recording holds the camera and mic, never the text.
 
-export const DEFAULTS = { size: 38, wpm: 130, mirror: false, width: 100, fit: false, wide: false, zoom: 0 };
+export const DEFAULTS = { size: 38, wpm: 130, mirror: false, width: 100 };
 export const LIMITS = { size: [20, 84], wpm: [60, 240] };
 const clamp = (v, [a, b]) => Math.min(b, Math.max(a, v));
 const esc = s => String(s).replace(/[&<>"]/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[m]));
@@ -69,11 +69,8 @@ const pickMime = () => (window.MediaRecorder ? MIMES.find(m => MediaRecorder.isT
 export const canRecordHere = () => !!(navigator.mediaDevices?.getUserMedia && window.MediaRecorder);
 
 // Opens the front camera. Rejects with the browser's error when the page isn't allowed to.
-export const frameFor = (wide, landscape = innerWidth > innerHeight) => wide
-  ? { width: { ideal: landscape ? 1920 : 1440 }, height: { ideal: landscape ? 1440 : 1920 }, aspectRatio: { ideal: landscape ? 4 / 3 : 3 / 4 } }
-  : { width: { ideal: landscape ? 1920 : 1080 }, height: { ideal: landscape ? 1080 : 1920 }, aspectRatio: { ideal: landscape ? 16 / 9 : 9 / 16 } };
-export async function openCamera(landscape = innerWidth > innerHeight, wide = false) {
-  const video = { facingMode: 'user', ...frameFor(wide, landscape), frameRate: { ideal: 30 } };
+export async function openCamera(landscape = innerWidth > innerHeight) {
+  const video = { facingMode: 'user', width: { ideal: landscape ? 1920 : 1080 }, height: { ideal: landscape ? 1080 : 1920 }, frameRate: { ideal: 30 } };
   const audio = { echoCancellation: false, noiseSuppression: true, autoGainControl: true };
   try { return await navigator.mediaDevices.getUserMedia({ video, audio }); }
   catch (e) { if (e.name === 'OverconstrainedError') return navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: true }); throw e; }
@@ -82,8 +79,6 @@ export async function openCamera(landscape = innerWidth > innerHeight, wide = fa
 export const PROMPTER_CSS = `
 .pt{position:fixed;inset:0;z-index:9999;background:#05060c;color:#fff;font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;overflow:hidden;touch-action:none;user-select:none;-webkit-user-select:none}
 .pt video.pt-cam{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1);background:#05060c}
-.pt.pt-fit video.pt-cam{object-fit:contain}
-.pt .pt-top button.pt-on{color:#E0B84F;border-color:#E0B84F}
 .pt .pt-shade{position:absolute;inset:0 0 auto 0;height:58%;background:linear-gradient(to bottom,rgba(5,6,12,.86) 0,rgba(5,6,12,.74) 72%,rgba(5,6,12,0) 100%);pointer-events:none}
 .pt.pt-nocam .pt-shade{display:none}
 .pt .pt-view{position:absolute;left:0;right:0;top:0;height:58%;overflow:hidden;padding:0 max(18px,env(safe-area-inset-left));cursor:grab}
@@ -140,11 +135,10 @@ export function mountPrompter(root, opts) {
   el.innerHTML = `${stream ? '<video class="pt-cam" playsinline autoplay muted></video><div class="pt-shade"></div>' : ''}
     <div class="pt-view"><div class="pt-roll">${lines.map(l => l.kind === 'head' ? `<p class="pt-head">${esc(l.text)}</p>` : `<p class="pt-say ${l.kind === 'yours' ? 'pt-yours' : ''} ${l.kind === 'cue' ? 'pt-cue' : ''}">${esc(l.text)}</p>`).join('')}</div></div>
     <div class="pt-stat" data-stat></div>
-    <div class="pt-top">${stream ? '<button data-wide title="Widest view the lens gives. Crop to 9:16 in the edit">Wide</button><button data-fit title="Show the whole recorded frame">Fit</button>' : ''}<button data-mirror title="Flip the words for a glass rig">⇋</button><button data-close aria-label="Close">✕</button></div>
+    <div class="pt-top"><button data-mirror title="Flip the words for a glass rig">⇋</button><button data-close aria-label="Close">✕</button></div>
     <div class="pt-bar">
       <div class="pt-ctl"><button data-size="-1" aria-label="Smaller text">A−</button><label>TEXT SIZE <b data-sizev></b><input type="range" data-sizer min="${LIMITS.size[0]}" max="${LIMITS.size[1]}" step="1" aria-label="Text size"></label><button data-size="1" aria-label="Larger text">A+</button></div>
       <div class="pt-ctl"><button data-wpm="-5" aria-label="Slower">🐢</button><label>SPEED <b data-wpmv></b><input type="range" data-wpmr min="${LIMITS.wpm[0]}" max="${LIMITS.wpm[1]}" step="5" aria-label="Speed in words per minute"></label><button data-wpm="5" aria-label="Faster">🐇</button></div>
-      <div class="pt-ctl" data-zoomrow hidden><button data-zoom="-1" aria-label="Zoom out">−</button><label>ZOOM <b data-zoomv></b><input type="range" data-zoomr aria-label="Camera zoom"></label><button data-zoom="1" aria-label="Zoom in">+</button></div>
       <div class="pt-main"><button class="pt-side" data-top>↑ To the top</button><button class="pt-rec ${stream ? '' : 'pt-play'}" data-main aria-label="${stream ? 'Record' : 'Play'}"><i></i></button><button class="pt-side" data-pause></button></div>
     </div>`;
   root.appendChild(el);
@@ -170,18 +164,6 @@ export function mountPrompter(root, opts) {
   // A new size re-flows the text; keep the same words on the reading line.
   const setSize = v => { const frac = y / scrollable(); prefs.size = clamp(v, LIMITS.size); roll.style.fontSize = prefs.size + 'px'; y = frac * scrollable(); paint(); persist(); };
   const setWpm = v => { prefs.wpm = clamp(v, LIMITS.wpm); paint(); persist(); };
-  // ---------- framing: Fit shows the whole recorded frame, Wide asks the lens for its full view, Zoom uses the camera's own zoom where the phone offers it ----------
-  const vtrack = stream?.getVideoTracks?.()[0];
-  const zcap = (() => { try { return vtrack?.getCapabilities?.().zoom; } catch { return null; } })();
-  const hasZoom = !!(zcap && zcap.max > zcap.min);
-  const setFit = v => { prefs.fit = !!v; el.classList.toggle('pt-fit', prefs.fit); $('[data-fit]')?.classList.toggle('pt-on', prefs.fit); persist(); };
-  const setWide = async v => { if (!vtrack || recording || busy) return; try { await vtrack.applyConstraints(frameFor(!!v)); prefs.wide = !!v; } catch { prefs.wide = false; } $('[data-wide]')?.classList.toggle('pt-on', prefs.wide); if (prefs.wide) setFit(true); else persist(); };
-  const setZoom = async v => { if (!hasZoom) return; const z = clamp(v, [zcap.min, zcap.max]); try { await vtrack.applyConstraints({ advanced: [{ zoom: z }] }); prefs.zoom = z; } catch { return; } $('[data-zoomv]').textContent = z.toFixed(1) + '×'; $('[data-zoomr]').value = z; persist(); };
-  if (stream) {
-    $('[data-fit]').onclick = () => setFit(!prefs.fit); $('[data-wide]').onclick = () => setWide(!prefs.wide);
-    setFit(prefs.fit); if (prefs.wide) setWide(true);
-    if (hasZoom) { const r = $('[data-zoomr]'); r.min = zcap.min; r.max = zcap.max; r.step = zcap.step || 0.1; $('[data-zoomrow]').hidden = false; r.oninput = e => setZoom(+e.target.value); el.querySelectorAll('[data-zoom]').forEach(b => b.onclick = () => setZoom((prefs.zoom || zcap.min) + 0.1 * +b.dataset.zoom)); setZoom(prefs.zoom || zcap.min); }
-  }
 
   const tick = t => {
     raf = requestAnimationFrame(tick);
