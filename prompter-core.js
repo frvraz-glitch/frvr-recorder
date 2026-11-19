@@ -5,8 +5,8 @@
 // Speed is words per minute, measured against the laid-out text, so changing the text size never changes his pace.
 // The words sit on the screen only: the recording holds the camera and mic, never the text.
 
-export const DEFAULTS = { size: 38, wpm: 130, mirror: false, width: 100, fitView: true };
-export const LIMITS = { size: [20, 84], wpm: [60, 240] };
+export const DEFAULTS = { size: 38, wpm: 130, mirror: false, width: 100, fitView: true, countdown: 3 };
+export const LIMITS = { size: [20, 84], wpm: [60, 240], countdown: [3, 10] };
 const clamp = (v, [a, b]) => Math.min(b, Math.max(a, v));
 const esc = s => String(s).replace(/[&<>"]/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[m]));
 
@@ -189,7 +189,7 @@ export function mountPrompter(root, opts) {
   const countdown = async n => { const c = document.createElement('div'); c.className = 'pt-count'; el.appendChild(c); for (let i = n; i > 0; i--) { c.textContent = i; await new Promise(r => setTimeout(r, 1000)); } c.remove(); };
   async function startRec() {
     if (busy) return; busy = true;
-    await countdown(3);
+    await countdown(clamp(Math.round(+prefs.countdown) || 3, LIMITS.countdown));
     chunks = []; const mimeType = pickMime();
     recorder = new MediaRecorder(stream, { ...(mimeType ? { mimeType } : {}), videoBitsPerSecond: 8_000_000, audioBitsPerSecond: 160_000 });
     recorder.ondataavailable = e => { if (e.data?.size) chunks.push(e.data); };
